@@ -24,7 +24,7 @@ class CocoMetadata:
         assert len(four_nps) % 4 == 0
         return [(CocoMetadata.parse_float(four_nps[x * 4:x * 4 + 4]) + adjust) for x in range(len(four_nps) // 4)]
 
-    def __init__(self, idx, img_path, img_meta, keypoint_infos, number_of_heatmap, sigma):
+    def __init__(self, idx, img_path, img_meta, keypoint_infos, number_of_heatmap, sigma, dataset_name: str = 'COCO'):
         self.idx = idx
         self.img = self.read_image(img_path)
         self.sigma = sigma
@@ -34,6 +34,7 @@ class CocoMetadata:
         self.number_of_heatmap = number_of_heatmap
 
         joint_list = []
+        #print(keypoint_infos)
         for keypoint_info in keypoint_infos:
             if keypoint_info.get('num_keypoints', 0) == 0:
                 continue
@@ -58,23 +59,33 @@ class CocoMetadata:
         #     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
         #     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
         # )) # ai challenge
-        transform = list(zip(
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
-        )) # coco
+        if dataset_name == 'COCO':
+            transform = list(zip(
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+            )) # coco
+        elif dataset_name == 'MHP':
+            transform = list(zip(
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+            )) # coco
+        else:
+            raise RuntimeError(f'Unknown dataset {dataset_name}')
+
+            
         for prev_joint in joint_list:
             new_joint = []
             for idx1, idx2 in transform:
                 j1 = prev_joint[idx1 - 1]
                 j2 = prev_joint[idx2 - 1]
-
                 if j1[0] <= 0 or j1[1] <= 0 or j2[0] <= 0 or j2[1] <= 0:
                     new_joint.append((-1000, -1000))
                 else:
-                    new_joint.append(((j1[0] + j2[0]) / 2, (j1[1] + j2[1]) / 2))
+                    new_joint.append((((j1[0] + j2[0]) / 2), ((j1[1] + j2[1]) / 2)))
             # background
             # new_joint.append((-1000, -1000))
             self.joint_list.append(new_joint)
+            
 
     def get_heatmap(self, target_size):
 
@@ -82,6 +93,7 @@ class CocoMetadata:
 
         for joints in self.joint_list:
             for idx, point in enumerate(joints):
+                #print('point fo heatmap', idx, point)
                 if point[0] < 0 or point[1] < 0:
                     continue
                 CocoMetadata.put_heatmap(heatmap, idx, point, self.sigma)
@@ -91,11 +103,12 @@ class CocoMetadata:
         # background
         # heatmap[:, :, -1] = np.clip(1 - np.amax(heatmap, axis=2), 0.0, 1.0)
 
-        # print(heatmap.shape)
+        #print(heatmap)
         if target_size:
             # print(heatmap.shape, "->", target_size)
+            #print('get heatma[p', heatmap.shape, np.sum(heatmap), target_size)
             heatmap = cv2.resize(heatmap, target_size, interpolation=cv2.INTER_AREA)
-
+            #print(heatmap.shape)
         return heatmap.astype(np.float16)
 
     @staticmethod
@@ -124,7 +137,9 @@ class CocoMetadata:
                 heatmap[plane_idx][y][x] = min(heatmap[plane_idx][y][x], 1.0)
 
     def read_image(self, img_path):
+        #print(img_path)
         img_str = open(img_path, "rb").read()
+        #print(img_path)
         if not img_str:
             print("image not read, path=%s" % img_path)
         nparr = np.fromstring(img_str, np.uint8)

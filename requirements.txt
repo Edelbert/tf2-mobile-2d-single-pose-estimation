@@ -11,3 +11,6 @@ ipython==7.21.0
 tensorpack==0.11
 six==1.15.0
 psutil==5.8.0
+dataflow==0.9.5
+pycocotools==2.0.2
+jpeg4py==0.1.4

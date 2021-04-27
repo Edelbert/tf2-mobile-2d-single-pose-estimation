@@ -19,13 +19,15 @@
 - "mv2_hourglass"
 """
 
-def get_model(model_name, model_subname=None, number_of_keypoints=14, config_extra={}, backbone_name=None):
+def get_model(model_name, model_subname=None, number_of_keypoints=14, config_extra={}, backbone_name=None, input_size:int = None, weights: str = None):
     if model_name == "simplepose":
         return _get_simplepose_model(model_subname=model_subname, number_of_keypoints=number_of_keypoints, config_extra=config_extra)
     elif model_name == "cpm":
         return _get_cpm_model(model_subname=model_subname, number_of_keypoints=number_of_keypoints, config_extra=config_extra, backbone_name=backbone_name)
     elif model_name == "hourglass":
         return _get_hourglass_model(model_subname=model_subname, number_of_keypoints=number_of_keypoints, config_extra=config_extra)
+    elif model_name == "blazepose_full":
+        return _get_blazepose_model(model_subname=model_subname, number_of_keypoints=number_of_keypoints, config_extra=config_extra, input_size = input_size, weights = weights)
     assert False, f"model name is weird: {model_name}"
 
 def _get_simplepose_model(model_subname="", number_of_keypoints=14, config_extra={}):
@@ -133,6 +135,16 @@ def _get_cpm_model(model_subname="", number_of_keypoints=14, config_extra={}, ba
 def _get_hourglass_model(model_subname="", number_of_keypoints=14, config_extra={}):
     from models import mv2_hourglass
     return mv2_hourglass.build_mv2_hourglass_model(number_of_keypoints=number_of_keypoints)
+
+def _get_blazepose_model(model_subname: str ="", number_of_keypoints: int = 16, config_extra = {}, input_size:int = None, weights: str = None):
+    from models import blazepose_full
+    model = blazepose_full.BlazePose(number_of_keypoints).build_model(model_subname, input_size =input_size)
+    model.compile()
+    if weights:
+        print(f'load weights for model from {weights}')
+        model.load_weights(weights, by_name = True, skip_mismatch=True)
+        #print(model.conv1.get_weights())
+    return model
 
 if __name__ == '__main__':
     my_model = get_model(model_name="simplepose", model_subname="mobilenetv2")

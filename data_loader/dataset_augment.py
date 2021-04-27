@@ -15,6 +15,13 @@ import numpy as np
 from tensorpack.dataflow.imgaug.geometry import RotationAndCropValid
 from enum import Enum
 
+import imgaug as ia
+from imgaug import augmenters as iaa
+from scipy import misc
+import copy
+import random
+from imgaug import parameters as iap
+
 # class CocoPart(Enum):
 #     TOPLEFT = 0
 #     TOPRIGHT = 1
@@ -37,6 +44,25 @@ from enum import Enum
 #     LKnee = 12
 #     LAnkle = 13
 #     Background = 14  # Background is not used
+
+class MHPPart(Enum):
+    RAnkle = 0
+    RKnee = 1
+    RHip = 2
+    LHip = 3
+    LKnee = 4
+    LAnkle = 5
+    Pelvis = 6
+    Thorax = 7
+    UpperNeck = 8
+    HeadTop = 9
+    RWrist = 10
+    RElbow = 11
+    RShoulder = 12
+    LShoulder = 13
+    LElbow = 14
+    LWrist = 15
+    Background = 16 #background is not used
 
 class CocoPart(Enum):
     Nose = 0
@@ -63,8 +89,11 @@ def pose_random_scale(meta):
     scaleh = random.uniform(0.8, 1.2)
     neww = int(meta.width * scalew)
     newh = int(meta.height * scaleh)
-
-    dst = cv2.resize(meta.img, (neww, newh), interpolation=cv2.INTER_AREA)
+    #print(meta.img.shape, meta.width, meta.height)
+    try:
+        dst = cv2.resize(meta.img, (neww, newh), interpolation=cv2.INTER_AREA)
+    except cv2.error as ex:
+        print(meta.img.shape, meta.width, meta.height, newh, neww)
 
     # adjust meta data
     adjust_joint_list = []
@@ -123,9 +152,7 @@ def pose_rotation(meta, config_preproc):
     return meta
 
 
-def pose_flip(meta):
-    return meta
-
+def pose_flip(meta, dataset_name = 'COCO'):
     r = random.uniform(0, 1.0)
     if r > 0.5:
         return meta
@@ -134,9 +161,14 @@ def pose_flip(meta):
     img = cv2.flip(img, 1)
 
     # flip meta
-    flip_list = [CocoPart.Top, CocoPart.Neck, CocoPart.LShoulder, CocoPart.LElbow, CocoPart.LWrist, CocoPart.RShoulder,
-                 CocoPart.RElbow, CocoPart.RWrist,
-                 CocoPart.LHip, CocoPart.LKnee, CocoPart.LAnkle, CocoPart.RHip, CocoPart.RKnee, CocoPart.RAnkle]
+    if dataset_name == 'COCO':
+        flip_list = [CocoPart.Top, CocoPart.Neck, CocoPart.LShoulder, CocoPart.LElbow, CocoPart.LWrist, CocoPart.RShoulder,
+                    CocoPart.RElbow, CocoPart.RWrist,
+                    CocoPart.LHip, CocoPart.LKnee, CocoPart.LAnkle, CocoPart.RHip, CocoPart.RKnee, CocoPart.RAnkle]
+    elif dataset_name == 'MHP':
+        flip_list = [MHPPart.RAnkle, MHPPart.RKnee, MHPPart.RHip, MHPPart.LHip, MHPPart.LKnee, MHPPart.LAnkle, 
+                    MHPPart.Pelvis, MHPPart.Thorax, MHPPart.UpperNeck, MHPPart.HeadTop, MHPPart.RWrist, 
+                    MHPPart.RElbow, MHPPart.RShoulder, MHPPart.LShoulder, MHPPart.LElbow, MHPPart.LWrist]
 
     adjust_joint_list = []
     for joint in meta.joint_list:
@@ -299,7 +331,7 @@ def pose_to_img(meta_l, config_model):
     #        meta_l.get_heatmap(target_size=(model_config.output_size, model_config.output_size)).astype(np.float32)
 
 
-def preprocess_image(img_meta_data, config_model, config_preproc):
+def preprocess_image(img_meta_data, config_model, config_preproc, dataset_name = 'COCO'):
     if config_preproc["is_scale"]:
         img_meta_data = pose_random_scale(img_meta_data)
 
@@ -307,7 +339,7 @@ def preprocess_image(img_meta_data, config_model, config_preproc):
         img_meta_data = pose_rotation(img_meta_data, config_preproc)
 
     if config_preproc["is_flipping"]:
-        img_meta_data = pose_flip(img_meta_data)
+        img_meta_data = pose_flip(img_meta_data, dataset_name = dataset_name)
 
     if config_preproc["is_resize_shortest_edge"]:
         img_meta_data = pose_resize_shortestedge_random(img_meta_data, config_model=config_model)
@@ -321,3 +353,81 @@ def preprocess_image(img_meta_data, config_model, config_preproc):
     images, labels = pose_to_img(img_meta_data, config_model=config_model)
 
     return images, labels
+
+class Augmentation(object):
+    
+    def pose2keypoints(self, image, pose):
+        keypoints = []
+        #print(pose.shape)
+        for row in range(int(pose.shape[0])):
+            x = pose[row,0]
+            y = pose[row,1]
+            keypoints.append(ia.Keypoint(x=x, y=y))
+        return ia.KeypointsOnImage(keypoints, shape=image.shape)
+
+    def keypoints2pose(self, keypoints_aug):
+        one_person = []
+        for kp_idx, keypoint in enumerate(keypoints_aug.keypoints):
+            x_new, y_new = keypoint.x, keypoint.y
+            one_person.append(np.array(x_new).astype(np.float32))
+            one_person.append(np.array(y_new).astype(np.float32))
+
+        return np.array(one_person).reshape([-1,2])
+
+    def __call__(self, sample):
+        image, pose = sample['image'], sample['pose'].reshape([-1,2])
+
+        sometimes = lambda aug: iaa.Sometimes(0.3, aug)
+
+        seq = iaa.Sequential(
+            [
+                # Apply the following augmenters to most images.
+
+                sometimes(iaa.CropAndPad(percent=(-0.25, 0.25), pad_mode=["edge"], keep_size=False)),
+
+                sometimes(iaa.Affine(
+                    scale={"x": (0.75, 1.25), "y": (0.75, 1.25)},
+                    translate_percent={"x": (-0.25, 0.25), "y": (-0.25, 0.25)},
+                    rotate=(-45, 45),
+                    shear=(-5, 5),
+                    order=[0, 1],
+                    cval=(0, 255),
+                    mode=ia.ALL
+                )),
+
+                iaa.SomeOf((0, 3),
+                    [
+        
+                        iaa.OneOf([
+                            iaa.GaussianBlur((0, 3.0)),
+                            # iaa.AverageBlur(k=(2, 7)),
+                            iaa.MedianBlur(k=(3, 11)),
+                            iaa.MotionBlur(k=5,angle=[-45, 45])
+                        ]),
+
+                        iaa.OneOf([
+                            iaa.AdditiveGaussianNoise(loc=0, scale=(0.0, 0.05*255), per_channel=0.5),
+                            iaa.AdditivePoissonNoise(lam=(0,8), per_channel=True),
+                        ]),
+
+                        iaa.OneOf([
+                            iaa.Add((-10, 10), per_channel=0.5),
+                            iaa.Multiply((0.2, 1.2), per_channel=0.5),
+                            iaa.ContrastNormalization((0.5, 2.0), per_channel=0.5),
+                        ]),
+                    ],
+                    # do all of the above augmentations in random order
+                    random_order=True
+                )
+            ],
+            # do all of the above augmentations in random order
+            random_order=True
+        )
+
+        # augmentation choices
+        seq_det = seq.to_deterministic()
+
+        image_aug = seq_det.augment_images([image])[0]
+        keypoints_aug = seq_det.augment_keypoints([self.pose2keypoints(image,pose)])[0]
+
+        return {'image': image_aug, "pose": self.keypoints2pose(keypoints_aug)}
